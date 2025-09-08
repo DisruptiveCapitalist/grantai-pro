@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+
+{% block title %}Opportunities - GrantAI Pro{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-8">
+    <!-- Header -->
+    <div class="mb-8">
+        <h1 class="text-3xl font-bold text-gray-900">Grant Opportunities</h1>
+        <p class="text-gray-600 mt-2">Find grants with competitive intelligence insights</p>
+    </div>
+
+    <!-- Filters -->
+    <div class="bg-white p-6 rounded-lg shadow mb-8">
+        <form method="GET" class="grid grid-cols-1 md:grid-cols-5 gap-4">
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">Agency</label>
+                <select name="agency" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                    <option value="">All Agencies</option>
+                    {% for agency in agencies %}
+                        <option value="{{ agency }}" {{ 'selected' if filters.agency == agency }}>{{ agency }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">Min Amount</label>
+                <input type="number" name="amount_min" value="{{ filters.amount_min }}" 
+                       class="w-full border border-gray-300 rounded-lg px-3 py-2" placeholder="$0">
+            </div>
+            
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">Max Amount</label>
+                <input type="number" name="amount_max" value="{{ filters.amount_max }}" 
+                       class="w-full border border-gray-300 rounded-lg px-3 py-2" placeholder="Any">
+            </div>
+            
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">Competition Level</label>
+                <select name="competition" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                    <option value="">All Levels</option>
+                    <option value="low" {{ 'selected' if filters.competition == 'low' }}>🎯 Low Competition</option>
+                    <option value="medium" {{ 'selected' if filters.competition == 'medium' }}>⚡ Medium Competition</option>
+                    <option value="high" {{ 'selected' if filters.competition == 'high' }}>🔥 High Competition</option>
+                </select>
+            </div>
+            
+            <div class="flex items-end">
+                <button type="submit" class="w-full bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
+                    <i class="fas fa-search mr-2"></i>Filter
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Opportunities Grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {% for opp in opportunities %}
+        <div class="opportunity-card competition-{{ opp.competition_level }} bg-white p-6 rounded-lg shadow hover:shadow-lg" 
+             data-opportunity-id="{{ opp.opportunity_id or opp._id }}">
+            <!-- Competition Badge (prominent) -->
+            <div class="flex justify-between items-start mb-4">
+                <span class="competition-badge competition-{{ opp.competition_level }}">
+                    {{ opp.competition_badge.icon }} {{ opp.competition_badge.text }}
+                </span>
+                <span class="text-xs text-gray-500">{{ opp.close_date|days_until }}</span>
+            </div>
+            
+            <!-- Opportunity Details -->
+            <h3 class="text-lg font-semibold text-gray-900 mb-2">{{ opp.title }}</h3>
+            <p class="text-sm text-gray-600 mb-3">{{ opp.agency }}</p>
+            
+            {% if opp.description %}
+            <p class="text-sm text-gray-700 mb-4">{{ opp.description[:150] }}...</p>
+            {% endif %}
+            
+            <!-- Key Stats -->
+            <div class="grid grid-cols-2 gap-4 mb-4">
+                <div class="text-center p-3 bg-gray-50 rounded">
+                    <p class="text-xs text-gray-500">Award Amount</p>
+                    <p class="font-semibold">{{ opp.amount_max|currency }}</p>
+                </div>
+                <div class="text-center p-3 bg-gray-50 rounded">
+                    <p class="text-xs text-gray-500">Time Left</p>
+                    <p class="font-semibold">{{ opp.close_date|days_until }}</p>
+                </div>
+            </div>
+            
+            <!-- Action Buttons -->
+            <div class="flex gap-2">
+                <a href="{{ url_for('opportunity_detail', opportunity_id=opp.opportunity_id or opp._id) }}" 
+                   class="flex-1 bg-blue-600 text-white text-center py-2 rounded hover:bg-blue-700"
+                   onclick="trackActivity('{{ opp.opportunity_id or opp._id }}', 'clicked_view_details')">
+                    View Details
+                </a>
+                <button class="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50"
+                        onclick="trackActivity('{{ opp.opportunity_id or opp._id }}', 'saved_opportunity')">
+                    <i class="fas fa-bookmark"></i>
+                </button>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    {% if not opportunities %}
+    <div class="text-center py-12">
+        <i class="fas fa-search text-6xl text-gray-300 mb-4"></i>
+        <h3 class="text-xl font-semibold text-gray-600 mb-2">No opportunities found</h3>
+        <p class="text-gray-500">Try adjusting your filters or check back later</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

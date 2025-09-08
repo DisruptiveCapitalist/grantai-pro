@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}{{ opportunity.title }} - GrantAI Pro{% endblock %}
+{% block content %}
+<div class="max-w-4xl mx-auto px-4 py-8">
+    <div class="bg-white rounded-lg shadow p-8">
+        <!-- Competition Badge -->
+        <div class="flex justify-between items-start mb-6">
+            <span class="competition-badge competition-{{ opportunity.competition_level }}">
+                {{ opportunity.competition_badge.icon }} {{ opportunity.competition_badge.text }}
+            </span>
+            <span class="text-gray-500">{{ opportunity.close_date|days_until }}</span>
+        </div>
+        
+        <h1 class="text-3xl font-bold text-gray-900 mb-4">{{ opportunity.title }}</h1>
+        <p class="text-xl text-gray-600 mb-6">{{ opportunity.agency }}</p>
+        
+        {% if opportunity.description %}
+        <div class="mb-8">
+            <h2 class="text-xl font-semibold mb-3">Description</h2>
+            <p class="text-gray-700 leading-relaxed">{{ opportunity.description }}</p>
+        </div>
+        {% endif %}
+        
+        <!-- Key Details -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div class="bg-gray-50 p-4 rounded-lg">
+                <h3 class="font-semibold text-gray-900 mb-2">Award Amount</h3>
+                <p class="text-2xl font-bold text-green-600">{{ opportunity.amount_max|currency }}</p>
+            </div>
+            <div class="bg-gray-50 p-4 rounded-lg">
+                <h3 class="font-semibold text-gray-900 mb-2">Deadline</h3>
+                <p class="text-2xl font-bold text-red-600">{{ opportunity.close_date|days_until }}</p>
+            </div>
+            <div class="bg-gray-50 p-4 rounded-lg">
+                <h3 class="font-semibold text-gray-900 mb-2">Competition</h3>
+                <p class="text-2xl font-bold competition-{{ opportunity.competition_level }}">
+                    {{ opportunity.competition_badge.text }}
+                </p>
+            </div>
+        </div>
+        
+        <!-- Competitive Analysis -->
+        {% if competitive_analysis %}
+        <div class="mb-8">
+            <h2 class="text-xl font-semibold mb-4">📊 Competitive Intelligence</h2>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div class="text-center p-3 bg-blue-50 rounded">
+                    <p class="text-2xl font-bold text-blue-600">{{ competitive_analysis.total_users_interested or 0 }}</p>
+                    <p class="text-sm text-gray-600">Users Interested</p>
+                </div>
+                <div class="text-center p-3 bg-orange-50 rounded">
+                    <p class="text-2xl font-bold text-orange-600">{{ competitive_analysis.total_users_started or 0 }}</p>
+                    <p class="text-sm text-gray-600">Started Applications</p>
+                </div>
+                <div class="text-center p-3 bg-green-50 rounded">
+                    <p class="text-2xl font-bold text-green-600">{{ "%.1f"|format((competitive_analysis.estimated_success_rate or 0) * 100) }}%</p>
+                    <p class="text-sm text-gray-600">Success Rate</p>
+                </div>
+                <div class="text-center p-3 bg-purple-50 rounded">
+                    <p class="text-2xl font-bold text-purple-600">{{ competitive_analysis.daily_new_applicants or 0 }}</p>
+                    <p class="text-sm text-gray-600">New Daily</p>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+        
+        <!-- Actions -->
+        <div class="flex gap-4">
+            <button class="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700"
+                    onclick="trackActivity('{{ opportunity.opportunity_id or opportunity._id }}', 'started_application')">
+                🚀 Start Application
+            </button>
+            <button class="border border-gray-300 px-6 py-3 rounded-lg hover:bg-gray-50"
+                    onclick="trackActivity('{{ opportunity.opportunity_id or opportunity._id }}', 'saved_opportunity')">
+                🔖 Save for Later
+            </button>
+            <a href="{{ url_for('opportunities') }}" class="border border-gray-300 px-6 py-3 rounded-lg hover:bg-gray-50">
+                ← Back to Opportunities
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,358 @@
+#!/usr/bin/env python3
+"""
+GrantAI Pro - Main Flask Application
+Phase 1, Week 1 - Backend Setup with MongoDB Atlas
+"""
+
+import os
+from flask import Flask, render_template, request, jsonify, session, redirect, url_for
+from flask_cors import CORS
+from pymongo import MongoClient
+from werkzeug.security import generate_password_hash, check_password_hash
+from datetime import datetime, timedelta
+import logging
+
+# CRITICAL: Load environment variables from .env file
+from dotenv import load_dotenv
+load_dotenv()
+
+# Initialize Flask app
+app = Flask(__name__)
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
+
+# Enable CORS for frontend integration
+CORS(app)
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# MongoDB Atlas Connection
+try:
+    # Get MongoDB URI from environment variables
+    MONGO_URI = os.environ.get('MONGO_URI')
+    
+    if not MONGO_URI:
+        logger.error("❌ MONGO_URI not found in environment variables")
+        raise ValueError("MongoDB connection string not configured")
+    
+    # Connect to MongoDB Atlas
+    client = MongoClient(MONGO_URI)
+    
+    # Test the connection
+    client.admin.command('ping')
+    logger.info("✅ Successfully connected to MongoDB Atlas")
+    
+    # Access the database
+    db = client.grantai
+    
+    # Access collections
+    users_collection = db.users
+    opportunities_collection = db.opportunities
+    applications_collection = db.applications
+    subscriptions_collection = db.subscriptions
+    
+except Exception as e:
+    logger.error(f"❌ Failed to connect to MongoDB Atlas: {e}")
+    logger.error("Please check your MONGO_URI in the .env file")
+    db = None
+
+# =======================
+# AUTHENTICATION ROUTES
+# =======================
+
+@app.route('/api/auth/register', methods=['POST'])
+def register():
+    """User registration endpoint"""
+    try:
+        data = request.get_json()
+        
+        # Validate required fields
+        required_fields = ['email', 'password', 'first_name', 'last_name']
+        for field in required_fields:
+            if field not in data or not data[field]:
+                return jsonify({'error': f'{field} is required'}), 400
+        
+        # Check if user already exists
+        if users_collection.find_one({'email': data['email']}):
+            return jsonify({'error': 'User already exists'}), 409
+        
+        # Create new user
+        user_data = {
+            'email': data['email'].lower().strip(),
+            'password_hash': generate_password_hash(data['password']),
+            'first_name': data['first_name'].strip(),
+            'last_name': data['last_name'].strip(),
+            'subscription_tier': 'free',
+            'created_at': datetime.utcnow(),
+            'last_login': None,
+            'is_active': True,
+            'profile': {
+                'organization': data.get('organization', ''),
+                'role': data.get('role', ''),
+                'experience_level': data.get('experience_level', 'beginner')
+            },
+            'usage_stats': {
+                'applications_generated': 0,
+                'opportunities_viewed': 0,
+                'last_activity': datetime.utcnow()
+            }
+        }
+        
+        # Insert user into database
+        result = users_collection.insert_one(user_data)
+        
+        # Create session
+        session['user_id'] = str(result.inserted_id)
+        session['user_email'] = data['email']
+        
+        logger.info(f"✅ New user registered: {data['email']}")
+        
+        return jsonify({
+            'message': 'Registration successful',
+            'user_id': str(result.inserted_id),
+            'redirect': '/dashboard'
+        }), 201
+        
+    except Exception as e:
+        logger.error(f"Registration error: {e}")
+        return jsonify({'error': 'Registration failed'}), 500
+
+@app.route('/api/auth/login', methods=['POST'])
+def login():
+    """User login endpoint"""
+    try:
+        data = request.get_json()
+        
+        # Validate input
+        if not data.get('email') or not data.get('password'):
+            return jsonify({'error': 'Email and password required'}), 400
+        
+        # Find user
+        user = users_collection.find_one({'email': data['email'].lower().strip()})
+        
+        if not user or not check_password_hash(user['password_hash'], data['password']):
+            return jsonify({'error': 'Invalid credentials'}), 401
+        
+        # Update last login
+        users_collection.update_one(
+            {'_id': user['_id']},
+            {'$set': {'last_login': datetime.utcnow()}}
+        )
+        
+        # Create session
+        session['user_id'] = str(user['_id'])
+        session['user_email'] = user['email']
+        
+        logger.info(f"✅ User logged in: {user['email']}")
+        
+        return jsonify({
+            'message': 'Login successful',
+            'user': {
+                'id': str(user['_id']),
+                'email': user['email'],
+                'first_name': user['first_name'],
+                'last_name': user['last_name'],
+                'subscription_tier': user['subscription_tier']
+            },
+            'redirect': '/dashboard'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Login error: {e}")
+        return jsonify({'error': 'Login failed'}), 500
+
+@app.route('/api/auth/logout', methods=['POST'])
+def logout():
+    """User logout endpoint"""
+    session.clear()
+    return jsonify({'message': 'Logout successful'}), 200
+
+# =======================
+# MAIN ROUTES
+# =======================
+
+@app.route('/')
+def index():
+    """Homepage with public metrics"""
+    try:
+        # Calculate public metrics
+        total_users = users_collection.count_documents({})
+        total_applications = applications_collection.count_documents({})
+        total_awards = applications_collection.count_documents({'status': 'awarded'})
+        total_funding = 50000000  # Placeholder - calculate from actual awards
+        
+        metrics = {
+            'total_users': total_users,
+            'total_applications': total_applications,
+            'total_awards': total_awards,
+            'total_funding': total_funding,
+            'success_rate': round((total_awards / max(total_applications, 1)) * 100, 1)
+        }
+        
+        return render_template('index.html', metrics=metrics)
+        
+    except Exception as e:
+        logger.error(f"Homepage error: {e}")
+        # Return with default metrics if database fails
+        default_metrics = {
+            'total_users': 0,
+            'total_applications': 0,
+            'total_awards': 0,
+            'total_funding': 0,
+            'success_rate': 0
+        }
+        return render_template('index.html', metrics=default_metrics)
+
+@app.route('/dashboard')
+def dashboard():
+    """User dashboard - requires authentication"""
+    if 'user_id' not in session:
+        return redirect(url_for('index'))
+    
+    try:
+        # Get user data
+        user = users_collection.find_one({'_id': session['user_id']})
+        if not user:
+            session.clear()
+            return redirect(url_for('index'))
+        
+        # Get user's recent opportunities (placeholder)
+        recent_opportunities = list(opportunities_collection.find({}).limit(10))
+        
+        # Get user's applications
+        user_applications = list(applications_collection.find(
+            {'user_id': session['user_id']}
+        ).sort('created_at', -1).limit(5))
+        
+        return render_template('dashboard.html', 
+                             user=user, 
+                             opportunities=recent_opportunities,
+                             applications=user_applications)
+        
+    except Exception as e:
+        logger.error(f"Dashboard error: {e}")
+        return render_template('dashboard.html', error="Unable to load dashboard")
+
+@app.route('/api/opportunities')
+def get_opportunities():
+    """API endpoint to get grant opportunities"""
+    try:
+        # Get pagination parameters
+        page = int(request.args.get('page', 1))
+        limit = min(int(request.args.get('limit', 20)), 100)  # Max 100 per page
+        skip = (page - 1) * limit
+        
+        # Get filter parameters
+        search = request.args.get('search', '')
+        category = request.args.get('category', '')
+        
+        # Build query
+        query = {}
+        if search:
+            query['$text'] = {'$search': search}
+        if category:
+            query['category'] = category
+        
+        # Get opportunities
+        opportunities = list(
+            opportunities_collection.find(query)
+            .skip(skip)
+            .limit(limit)
+            .sort('posted_date', -1)
+        )
+        
+        # Convert ObjectId to string for JSON serialization
+        for opp in opportunities:
+            opp['_id'] = str(opp['_id'])
+        
+        total_count = opportunities_collection.count_documents(query)
+        
+        return jsonify({
+            'opportunities': opportunities,
+            'pagination': {
+                'page': page,
+                'limit': limit,
+                'total': total_count,
+                'pages': (total_count + limit - 1) // limit
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Opportunities API error: {e}")
+        return jsonify({'error': 'Failed to fetch opportunities'}), 500
+
+@app.route('/api/health')
+def health_check():
+    """Health check endpoint"""
+    try:
+        # Test database connection
+        if db:
+            db.command('ping')
+            db_status = "connected"
+        else:
+            db_status = "disconnected"
+        
+        return jsonify({
+            'status': 'healthy',
+            'timestamp': datetime.utcnow().isoformat(),
+            'database': db_status,
+            'environment': os.environ.get('FLASK_ENV', 'development')
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'unhealthy',
+            'error': str(e),
+            'timestamp': datetime.utcnow().isoformat()
+        }), 500
+
+# =======================
+# ERROR HANDLERS
+# =======================
+
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({'error': 'Not found'}), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    return jsonify({'error': 'Internal server error'}), 500
+
+# =======================
+# MAIN APPLICATION
+# =======================
+
+if __name__ == '__main__':
+    # Verify environment setup
+    print("\n🚀 Starting GrantAI Pro...")
+    print("=" * 50)
+    
+    # Check environment variables
+    required_env_vars = ['SECRET_KEY', 'MONGO_URI']
+    missing_vars = []
+    
+    for var in required_env_vars:
+        if not os.environ.get(var):
+            missing_vars.append(var)
+    
+    if missing_vars:
+        print(f"❌ Missing environment variables: {', '.join(missing_vars)}")
+        print("Please check your .env file")
+    else:
+        print("✅ Environment variables loaded successfully")
+    
+    # Database connection status
+    if db:
+        print("✅ MongoDB Atlas connection established")
+    else:
+        print("❌ MongoDB Atlas connection failed")
+    
+    print("=" * 50)
+    
+    # Start the application
+    app.run(
+        host='0.0.0.0',
+        port=int(os.environ.get('PORT', 5000)),
+        debug=os.environ.get('FLASK_ENV') == 'development'
+    )
