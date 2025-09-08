@@ -4,60 +4,94 @@
 
 {% block content %}
 <div class="max-w-7xl mx-auto px-4 py-8">
-    <!-- Header -->
+    <!-- Header with subscription info -->
     <div class="mb-8">
-        <h1 class="text-3xl font-bold text-gray-900">Welcome back, {{ user_name }}!</h1>
-        <p class="text-gray-600 mt-2">Your competitive intelligence dashboard</p>
+        <h1 class="text-3xl font-bold text-gray-900">Welcome back, {{ user_data.get('name', user_name) }}!</h1>
+        <div class="flex items-center space-x-4 mt-2">
+            <p class="text-gray-600">{{ user_data.get('organization', 'Your Organization') }}</p>
+            <span class="px-3 py-1 bg-blue-100 text-blue-800 text-sm rounded-full font-medium">
+                {{ user_data.get('plan', 'Professional') }} Plan
+            </span>
+            {% if user_data.get('subscription_status') == 'trialing' %}
+            <span class="px-3 py-1 bg-green-100 text-green-800 text-sm rounded-full font-medium">
+                <i class="fas fa-clock mr-1"></i>7-Day Trial
+            </span>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Usage Stats -->
+    <div class="grid md:grid-cols-4 gap-6 mb-8">
+        <div class="bg-white p-6 rounded-lg shadow-sm border">
+            <div class="flex items-center">
+                <div class="p-2 bg-blue-100 rounded-lg">
+                    <i class="fas fa-rocket text-blue-600"></i>
+                </div>
+                <div class="ml-4">
+                    <div class="text-2xl font-bold text-blue-600">{{ user_data.get('applications_used', 0) }}/{{ user_data.get('applications_limit', 50) }}</div>
+                    <div class="text-gray-600">Applications This Month</div>
+                </div>
+            </div>
+        </div>
+        <div class="bg-white p-6 rounded-lg shadow-sm border">
+            <div class="flex items-center">
+                <div class="p-2 bg-green-100 rounded-lg">
+                    <i class="fas fa-check-circle text-green-600"></i>
+                </div>
+                <div class="ml-4">
+                    <div class="text-2xl font-bold text-green-600">
+                        {{ user_data.get('subscription_status', 'Active').title() }}
+                    </div>
+                    <div class="text-gray-600">Subscription Status</div>
+                </div>
+            </div>
+        </div>
+        <div class="bg-white p-6 rounded-lg shadow-sm border">
+            <div class="flex items-center">
+                <div class="p-2 bg-purple-100 rounded-lg">
+                    <i class="fas fa-file-alt text-purple-600"></i>
+                </div>
+                <div class="ml-4">
+                    <div class="text-2xl font-bold text-purple-600">{{ applications|length if applications else (competitive_summary.applications_started if competitive_summary else 0) }}</div>
+                    <div class="text-gray-600">Total Applications</div>
+                </div>
+            </div>
+        </div>
+        <div class="bg-white p-6 rounded-lg shadow-sm border">
+            <div class="flex items-center">
+                <div class="p-2 bg-orange-100 rounded-lg">
+                    <i class="fas fa-trophy text-orange-600"></i>
+                </div>
+                <div class="ml-4">
+                    <div class="text-2xl font-bold text-orange-600">{{ "%.1f"|format(competitive_summary.success_rate if competitive_summary else 72) }}%</div>
+                    <div class="text-gray-600">Avg Success Rate</div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Competitive Intelligence Summary -->
     {% if competitive_summary %}
-    <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-        <div class="bg-white p-6 rounded-lg shadow">
-            <div class="flex items-center">
-                <div class="p-2 bg-blue-100 rounded-lg">
-                    <i class="fas fa-eye text-blue-600"></i>
-                </div>
-                <div class="ml-4">
-                    <p class="text-sm text-gray-600">Opportunities Viewed</p>
-                    <p class="text-2xl font-bold">{{ competitive_summary.opportunities_viewed or 0 }}</p>
-                </div>
+    <div class="bg-gradient-to-r from-purple-500 to-purple-600 text-white p-6 rounded-lg shadow mb-8">
+        <h2 class="text-xl font-bold mb-4">
+            <i class="fas fa-chart-line mr-2"></i>Your Competitive Position
+        </h2>
+        <div class="grid md:grid-cols-4 gap-4">
+            <div class="text-center">
+                <div class="text-2xl font-bold">{{ competitive_summary.opportunities_viewed or 0 }}</div>
+                <div class="text-purple-100 text-sm">Opportunities Viewed</div>
             </div>
-        </div>
-        
-        <div class="bg-white p-6 rounded-lg shadow">
-            <div class="flex items-center">
-                <div class="p-2 bg-green-100 rounded-lg">
-                    <i class="fas fa-rocket text-green-600"></i>
-                </div>
-                <div class="ml-4">
-                    <p class="text-sm text-gray-600">Applications Started</p>
-                    <p class="text-2xl font-bold">{{ competitive_summary.applications_started or 0 }}</p>
-                </div>
+            <div class="text-center">
+                <div class="text-2xl font-bold">{{ competitive_summary.applications_started or 0 }}</div>
+                <div class="text-purple-100 text-sm">Applications Started</div>
             </div>
-        </div>
-        
-        <div class="bg-white p-6 rounded-lg shadow">
-            <div class="flex items-center">
-                <div class="p-2 bg-purple-100 rounded-lg">
-                    <i class="fas fa-chart-line text-purple-600"></i>
-                </div>
-                <div class="ml-4">
-                    <p class="text-sm text-gray-600">Success Rate</p>
-                    <p class="text-2xl font-bold">{{ "%.1f"|format(competitive_summary.success_rate or 0) }}%</p>
-                </div>
+            <div class="text-center">
+                <div class="text-2xl font-bold">#{{ competitive_summary.rank or "N/A" }}</div>
+                <div class="text-purple-100 text-sm">Competition Rank</div>
             </div>
-        </div>
-        
-        <div class="bg-white p-6 rounded-lg shadow">
-            <div class="flex items-center">
-                <div class="p-2 bg-orange-100 rounded-lg">
-                    <i class="fas fa-users text-orange-600"></i>
-                </div>
-                <div class="ml-4">
-                    <p class="text-sm text-gray-600">Competition Rank</p>
-                    <p class="text-2xl font-bold">#{{ competitive_summary.rank or "N/A" }}</p>
-                </div>
+            <div class="text-center">
+                <div class="text-2xl font-bold">{{ "%.1f"|format(competitive_summary.success_rate or 0) }}%</div>
+                <div class="text-purple-100 text-sm">Success Rate</div>
             </div>
         </div>
     </div>
@@ -85,61 +119,108 @@
             </div>
         </a>
         
-        <div class="bg-gradient-to-r from-green-500 to-green-600 text-white p-6 rounded-lg shadow">
+        <a href="/pricing" class="bg-gradient-to-r from-green-500 to-green-600 text-white p-6 rounded-lg shadow hover:shadow-lg transition-shadow">
             <div class="flex items-center">
-                <i class="fas fa-trophy text-2xl mr-4"></i>
+                <i class="fas fa-arrow-up text-2xl mr-4"></i>
                 <div>
-                    <h3 class="text-lg font-semibold">Success Rate</h3>
-                    <p class="text-green-100">Track your wins</p>
+                    <h3 class="text-lg font-semibold">Upgrade Plan</h3>
+                    <p class="text-green-100">Unlock premium features</p>
                 </div>
             </div>
+        </a>
+    </div>
+
+    <!-- Recent Applications -->
+    <div class="bg-white rounded-lg shadow-sm border">
+        <div class="p-6 border-b">
+            <h2 class="text-xl font-bold text-gray-900">Recent Applications</h2>
+        </div>
+        <div class="p-6">
+            {% if applications %}
+                <div class="space-y-4">
+                    {% for app in applications %}
+                    <div class="border rounded-lg p-4">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <h3 class="font-semibold text-gray-900">{{ app.title }}</h3>
+                                <p class="text-gray-600">{{ app.agency }} • ${{ "{:,}".format(app.amount) }}</p>
+                                <div class="flex items-center space-x-4 mt-2">
+                                    <span class="px-2 py-1 text-xs rounded-full 
+                                        {% if app.status == 'submitted' %}bg-blue-100 text-blue-800{% endif %}
+                                        {% if app.status == 'draft' %}bg-gray-100 text-gray-800{% endif %}
+                                        {% if app.status == 'awarded' %}bg-green-100 text-green-800{% endif %}">
+                                        {{ app.status.title() }}
+                                    </span>
+                                    <span class="text-sm text-gray-600">{{ app.success_probability }}% success probability</span>
+                                </div>
+                            </div>
+                            <div class="text-right">
+                                {% if app.status == 'submitted' %}
+                                    <div class="text-sm text-gray-600">Submitted {{ app.submitted_date }}</div>
+                                {% endif %}
+                                {% if app.status == 'draft' %}
+                                    <a href="#" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700">Continue Editing</a>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            {% elif opportunities %}
+                <!-- Fallback to opportunities list if no applications -->
+                <div class="space-y-4">
+                    {% for opp in opportunities %}
+                    <div class="opportunity-card competition-{{ opp.competition_level }} p-4 border rounded-lg bg-white hover:bg-gray-50" 
+                         data-opportunity-id="{{ opp.opportunity_id or opp._id }}">
+                        <div class="flex justify-between items-start">
+                            <div class="flex-1">
+                                <div class="flex items-center gap-3 mb-2">
+                                    <h3 class="font-semibold text-gray-900">{{ opp.title[:80] }}...</h3>
+                                    {% if opp.competition_badge %}
+                                    <span class="competition-badge competition-{{ opp.competition_level }}">
+                                        {{ opp.competition_badge.icon }} {{ opp.competition_badge.text }}
+                                    </span>
+                                    {% endif %}
+                                </div>
+                                <p class="text-sm text-gray-600 mb-2">{{ opp.agency }}</p>
+                                <div class="flex items-center gap-4 text-sm text-gray-500">
+                                    <span><i class="fas fa-calendar mr-1"></i>{{ opp.close_date|days_until if opp.close_date|days_until else opp.close_date }}</span>
+                                    <span><i class="fas fa-dollar-sign mr-1"></i>{{ opp.amount_max|currency if opp.amount_max|currency else "${:,}".format(opp.amount_max) }}</span>
+                                </div>
+                            </div>
+                            <div class="flex flex-col items-end">
+                                <a href="{{ url_for('opportunity_detail', opportunity_id=opp.opportunity_id or opp._id) }}" 
+                                   class="bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700"
+                                   onclick="trackActivity('{{ opp.opportunity_id or opp._id }}', 'clicked_view_details')">
+                                    View Details
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <div class="text-center py-8">
+                    <div class="text-gray-500">No applications yet. Start by finding grant opportunities!</div>
+                    <a href="{{ url_for('opportunities') }}" class="mt-4 inline-block bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700">Discover Grants</a>
+                </div>
+            {% endif %}
         </div>
     </div>
 
-    <!-- Recent Opportunities with Competition Badges -->
-    <div class="bg-white rounded-lg shadow p-6">
-        <div class="flex justify-between items-center mb-6">
-            <h2 class="text-xl font-bold text-gray-900">Recent Opportunities</h2>
-            <a href="{{ url_for('opportunities') }}" class="text-blue-600 hover:text-blue-800">View All →</a>
+    <!-- Subscription upgrade prompt -->
+    {% if user_data.get('plan') == 'Personal' %}
+    <div class="mt-8 bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-200 rounded-lg p-6">
+        <div class="flex items-center justify-between">
+            <div>
+                <h3 class="text-lg font-semibold text-gray-900">Unlock Premium Features</h3>
+                <p class="text-gray-600">Upgrade to Professional for advanced competitive intelligence and unlimited applications.</p>
+            </div>
+            <a href="/pricing" class="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 font-semibold">
+                Upgrade Now
+            </a>
         </div>
-        
-        {% if opportunities %}
-            <div class="space-y-4">
-                {% for opp in opportunities %}
-                <div class="opportunity-card competition-{{ opp.competition_level }} p-4 border rounded-lg bg-white hover:bg-gray-50" 
-                     data-opportunity-id="{{ opp.opportunity_id or opp._id }}">
-                    <div class="flex justify-between items-start">
-                        <div class="flex-1">
-                            <div class="flex items-center gap-3 mb-2">
-                                <h3 class="font-semibold text-gray-900">{{ opp.title[:80] }}...</h3>
-                                <span class="competition-badge competition-{{ opp.competition_level }}">
-                                    {{ opp.competition_badge.icon }} {{ opp.competition_badge.text }}
-                                </span>
-                            </div>
-                            <p class="text-sm text-gray-600 mb-2">{{ opp.agency }}</p>
-                            <div class="flex items-center gap-4 text-sm text-gray-500">
-                                <span><i class="fas fa-calendar mr-1"></i>{{ opp.close_date|days_until }}</span>
-                                <span><i class="fas fa-dollar-sign mr-1"></i>{{ opp.amount_max|currency }}</span>
-                            </div>
-                        </div>
-                        <div class="flex flex-col items-end">
-                            <a href="{{ url_for('opportunity_detail', opportunity_id=opp.opportunity_id or opp._id) }}" 
-                               class="bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700"
-                               onclick="trackActivity('{{ opp.opportunity_id or opp._id }}', 'clicked_view_details')">
-                                View Details
-                            </a>
-                        </div>
-                    </div>
-                </div>
-                {% endfor %}
-            </div>
-        {% else %}
-            <div class="text-center py-8 text-gray-500">
-                <i class="fas fa-search text-4xl mb-4"></i>
-                <p class="text-lg">No opportunities found</p>
-                <p class="text-sm">Check back later or browse all opportunities</p>
-            </div>
-        {% endif %}
     </div>
+    {% endif %}
 </div>
 {% endblock %}

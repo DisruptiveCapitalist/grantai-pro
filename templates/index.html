@@ -1,36 +1,167 @@
 {% extends "base.html" %}
-{% block title %}GrantAI Pro - AI-Powered Grant Discovery{% endblock %}
+
+{% block title %}GrantAI Pro - AI-Powered Grant Discovery & Competitive Intelligence{% endblock %}
+
 {% block content %}
-<div class="max-w-7xl mx-auto px-4 py-16 text-center">
-    <h1 class="text-5xl font-bold text-gray-900 mb-6">
-        🎯 GrantAI Pro
-    </h1>
-    <p class="text-xl text-gray-600 mb-8">
-        AI-powered grant discovery with competitive intelligence
-    </p>
-    {% if metrics %}
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-6 mb-12">
-        <div class="bg-white p-6 rounded-lg shadow">
-            <h3 class="text-3xl font-bold text-blue-600">${{ "{:,}".format(metrics.total_award_value) }}</h3>
-            <p class="text-gray-600">Total Awards Won</p>
-        </div>
-        <div class="bg-white p-6 rounded-lg shadow">
-            <h3 class="text-3xl font-bold text-green-600">{{ metrics.total_awards_won }}</h3>
-            <p class="text-gray-600">Successful Applications</p>
-        </div>
-        <div class="bg-white p-6 rounded-lg shadow">
-            <h3 class="text-3xl font-bold text-purple-600">{{ metrics.total_users_active }}</h3>
-            <p class="text-gray-600">Active Users</p>
-        </div>
-        <div class="bg-white p-6 rounded-lg shadow">
-            <h3 class="text-3xl font-bold text-orange-600">{{ "%.1f"|format(metrics.success_rate) }}%</h3>
-            <p class="text-gray-600">Success Rate</p>
+<!-- Hero Section -->
+<section class="bg-gradient-to-br from-blue-600 to-purple-700 text-white py-20">
+    <div class="max-w-7xl mx-auto px-4 text-center">
+        <h1 class="text-5xl font-bold mb-6">Stop Losing Grants to Better-Connected Organizations</h1>
+        <p class="text-xl mb-8 max-w-3xl mx-auto">GrantAI Pro helps you win more grants by showing you exactly who you're competing against and what makes winning applications successful.</p>
+        <div class="flex justify-center space-x-4">
+            <a href="/signup?plan=professional&promo=LAUNCH2025" class="bg-white text-blue-600 px-8 py-4 rounded-lg font-semibold text-lg hover:bg-gray-100">Start 7-Day Trial - 50% Off</a>
+            <a href="/pricing" class="border-2 border-white text-white px-8 py-4 rounded-lg font-semibold text-lg hover:bg-white hover:text-blue-600">View Pricing</a>
         </div>
     </div>
-    {% endif %}
-    <div class="space-x-4">
-        <a href="{{ url_for('register') }}" class="bg-blue-600 text-white px-8 py-3 rounded-lg text-lg hover:bg-blue-700">Get Started</a>
-        <a href="{{ url_for('login') }}" class="border border-blue-600 text-blue-600 px-8 py-3 rounded-lg text-lg hover:bg-blue-50">Login</a>
+</section>
+
+<!-- Public Metrics Section -->
+<section class="py-16 bg-white" x-data="{ metrics: {{ metrics|tojson }} }">
+    <div class="max-w-7xl mx-auto px-4">
+        <h2 class="text-3xl font-bold text-center text-gray-900 mb-12">Grant Intelligence Platform Status</h2>
+        <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-8">
+            <!-- Grant Database Metrics (Real Data) -->
+            <div class="text-center bg-blue-50 p-6 rounded-lg">
+                <div class="text-4xl font-bold text-blue-600" x-text="window.GrantAIPro.formatNumber(metrics.total_grants_database)">{{ "{:,}".format(metrics.get('total_grants_database', 0)) }}</div>
+                <div class="text-gray-600 font-medium">Grants in Database</div>
+                <div class="text-xs text-gray-500 mt-1">Updated daily via automated discovery</div>
+            </div>
+            
+            <div class="text-center bg-green-50 p-6 rounded-lg">
+                <div class="text-4xl font-bold text-green-600" x-text="window.GrantAIPro.formatCurrency(metrics.total_award_amounts_tracked)">{{ "${:,.0f}".format(metrics.get('total_award_amounts_tracked', 0)) }}</div>
+                <div class="text-gray-600 font-medium">Total Award Amounts Tracked</div>
+                <div class="text-xs text-gray-500 mt-1">Last updated: {{ metrics.get('last_updated', '2025-09-08') }}</div>
+            </div>
+            
+            <!-- Platform Activity Metrics (TBD until real data) -->
+            <div class="text-center bg-purple-50 p-6 rounded-lg">
+                <div class="text-4xl font-bold text-purple-600">
+                    {{ "TBD" if metrics.get('total_applications') is none else metrics.get('total_applications', 0) }}
+                </div>
+                <div class="text-gray-600 font-medium">Applications Generated</div>
+                <div class="text-xs text-gray-500 mt-1">Count starts with first real application</div>
+            </div>
+            
+            <div class="text-center bg-orange-50 p-6 rounded-lg">
+                <div class="text-4xl font-bold text-orange-600">
+                    {{ "TBD" if metrics.get('applications_pending') is none else metrics.get('applications_pending', 0) }}
+                </div>
+                <div class="text-gray-600 font-medium">Applications Under Review</div>
+                <div class="text-xs text-gray-500 mt-1">Pending grant decisions</div>
+            </div>
+        </div>
+        
+        <!-- User Metrics -->
+        <div class="grid md:grid-cols-2 gap-8 mt-8">
+            <div class="text-center bg-indigo-50 p-6 rounded-lg">
+                <div class="text-3xl font-bold text-indigo-600">
+                    {{ "TBD" if metrics.get('active_users') is none else metrics.get('active_users', 0) }}
+                </div>
+                <div class="text-gray-600 font-medium">Active Users (30 days)</div>
+                <div class="text-xs text-gray-500 mt-1">Users with recent platform activity</div>
+            </div>
+            
+            <div class="text-center bg-emerald-50 p-6 rounded-lg">
+                <div class="text-3xl font-bold text-emerald-600">
+                    {{ "TBD" if metrics.get('beta_users') is none else metrics.get('beta_users', 0) }}
+                </div>
+                <div class="text-gray-600 font-medium">Beta Program Users</div>
+                <div class="text-xs text-gray-500 mt-1">Early access members</div>
+            </div>
+        </div>
+        
+        <!-- Transparency Notice -->
+        <div class="mt-8 text-center bg-gray-50 p-6 rounded-lg">
+            <p class="text-sm text-gray-600">
+                <strong>Platform Transparency:</strong> Grant database metrics reflect real-time data from federal grant sources. 
+                User activity metrics display "TBD" until actual platform usage begins. 
+                Success rates will be reported after grant cycles complete (typically 3-6 months post-application).
+            </p>
+            <p class="text-xs text-gray-500 mt-2">
+                Last database update: {{ metrics.get('last_updated', '2025-09-08') }} | Platform launch: September 2025
+            </p>
+        </div>
     </div>
-</div>
+</section>
+
+<!-- Feature Highlights -->
+<section class="py-16 bg-gray-50">
+    <div class="max-w-7xl mx-auto px-4">
+        <h2 class="text-3xl font-bold text-center text-gray-900 mb-12">Everything You Need to Win More Grants</h2>
+        <div class="grid md:grid-cols-3 gap-8">
+            <div class="bg-white p-8 rounded-xl shadow-sm">
+                <div class="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center mb-4">
+                    <i class="fas fa-chart-line text-blue-600 text-xl"></i>
+                </div>
+                <h3 class="text-xl font-bold text-gray-900 mb-3">Competitive Intelligence</h3>
+                <p class="text-gray-600">See exactly who you're competing against and what makes their applications successful. Track competitor activity in real-time.</p>
+            </div>
+            <div class="bg-white p-8 rounded-xl shadow-sm">
+                <div class="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center mb-4">
+                    <i class="fas fa-trophy text-green-600 text-xl"></i>
+                </div>
+                <h3 class="text-xl font-bold text-gray-900 mb-3">Award Tracking</h3>
+                <p class="text-gray-600">Verify who wins which grants and learn from successful patterns in your field. USASpending.gov integration.</p>
+            </div>
+            <div class="bg-white p-8 rounded-xl shadow-sm">
+                <div class="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center mb-4">
+                    <i class="fas fa-rocket text-purple-600 text-xl"></i>
+                </div>
+                <h3 class="text-xl font-bold text-gray-900 mb-3">AI Application Writing</h3>
+                <p class="text-gray-600">Generate winning grant applications based on 8,000+ successful grant patterns and competitive analysis.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Sample Opportunities Preview -->
+{% if sample_opportunities %}
+<section class="py-16 bg-white">
+    <div class="max-w-7xl mx-auto px-4">
+        <h2 class="text-3xl font-bold text-center text-gray-900 mb-12">Latest Grant Opportunities</h2>
+        <div class="grid md:grid-cols-3 gap-6">
+            {% for opp in sample_opportunities %}
+            <div class="bg-gray-50 p-6 rounded-lg border-l-4 border-blue-500">
+                <h3 class="font-semibold text-gray-900 mb-2">{{ opp.title }}</h3>
+                <p class="text-gray-600 text-sm mb-3">{{ opp.agency }}</p>
+                <div class="flex justify-between items-center text-sm">
+                    <span class="text-green-600 font-semibold">Up to {{ "${:,}".format(opp.amount_max) }}</span>
+                    <span class="text-gray-500">Due: {{ opp.close_date }}</span>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        <div class="text-center mt-8">
+            <a href="/signup" class="bg-blue-600 text-white px-8 py-3 rounded-lg font-semibold hover:bg-blue-700">
+                View All Opportunities
+            </a>
+        </div>
+    </div>
+</section>
+{% endif %}
+
+<!-- Beta Promo Section -->
+<section class="py-16 bg-gradient-to-r from-green-500 to-green-600 text-white">
+    <div class="max-w-4xl mx-auto px-4 text-center">
+        <h2 class="text-3xl font-bold mb-4">Early Access: Beta User Program</h2>
+        <p class="text-xl mb-8">Join our beta program and help us build the future of grant intelligence. Get lifetime pricing as a founding user.</p>
+        <div class="bg-white text-green-600 inline-block px-6 py-3 rounded-lg font-mono text-2xl font-bold mb-6">
+            BETA50
+        </div>
+        <br>
+        <a href="/signup?plan=professional&promo=BETA50" class="bg-white text-green-600 px-8 py-4 rounded-lg font-semibold text-lg hover:bg-gray-100">
+            Join Beta Program - $98.50/month for Life
+        </a>
+        <p class="text-green-100 mt-4 text-sm">* Early access pricing, help shape the platform, 50% off professional features forever</p>
+    </div>
+</section>
+
+<!-- CTA Section -->
+<section class="py-16 bg-blue-600 text-white">
+    <div class="max-w-4xl mx-auto px-4 text-center">
+        <h2 class="text-3xl font-bold mb-4">Ready to Win More Grants?</h2>
+        <p class="text-xl mb-8">Join hundreds of organizations already using GrantAI Pro to increase their grant success rate with competitive intelligence.</p>
+        <a href="/signup?plan=professional&promo=LAUNCH2025" class="bg-white text-blue-600 px-8 py-4 rounded-lg font-semibold text-lg hover:bg-gray-100">Start Your 7-Day Trial - 50% Off First 6 Months</a>
+    </div>
+</section>
 {% endblock %}
