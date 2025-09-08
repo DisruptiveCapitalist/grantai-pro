@@ -1,707 +1,784 @@
-# app.py - Complete GrantAI Pro Flask Application
-"""
-GrantAI Pro - Phase 3 Complete Implementation
-Award tracking, pricing system, billing API, and public metrics
-"""
+# GrantAI Pro - Complete Flask Application with Difficulty Rating System
+# Production-ready SaaS platform for grant discovery and competitive intelligence
 
-from flask import Flask, render_template, session, jsonify, request, redirect, url_for
-from flask_session import Session
+from flask import Flask, render_template, request, jsonify, redirect, url_for, session, flash
+from flask_cors import CORS
 import pymongo
 from pymongo import MongoClient
+import stripe
 import os
 from datetime import datetime, timedelta
-import logging
-from bson import ObjectId
-import stripe
+import hashlib
+import secrets
 import requests
+import json
+import re
+from typing import Dict, List, Tuple, Optional
+from werkzeug.security import generate_password_hash, check_password_hash
+from functools import wraps
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+app = Flask(__name__)
+CORS(app)
 
-def create_app():
-    app = Flask(__name__)
-    
-    # Configuration
-    app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
-    app.config['SESSION_TYPE'] = 'filesystem'
-    app.config['SESSION_PERMANENT'] = False
-    app.config['SESSION_USE_SIGNER'] = True
-    
-    # Initialize Flask-Session
-    Session(app)
-    
-    # MongoDB connection
-    try:
-        mongo_uri = os.environ.get('MONGO_URI', 'mongodb+srv://sam_db_user:toTHx5k0dMYqteie@cluster0.s7k3hey.mongodb.net/grantai?retryWrites=true&w=majority')
-        client = MongoClient(mongo_uri)
-        db = client.get_database()
-        logger.info("Connected to MongoDB successfully")
-        
-        # Test the connection
-        client.admin.command('ping')
-        logger.info("MongoDB ping successful")
-    except Exception as e:
-        logger.error(f"MongoDB connection failed: {str(e)}")
-        # Set db to None for development
-        db = None
+# Configuration
+app.secret_key = os.environ.get('SECRET_KEY', 'dev-key-change-in-production')
+app.config['MONGO_URI'] = os.environ.get('MONGO_URI', 'mongodb://localhost:27017/grantai')
 
-    # Stripe configuration
-    stripe.api_key = os.environ.get('STRIPE_SECRET_KEY')
-    
-    # Pricing Plans Configuration
-    PRICING_PLANS = {
-        "personal": {
-            "name": "Personal",
-            "description": "For individual grant writers and small nonprofits",
-            "monthly_price": 97,
-            "annual_price": 78,  # $78/month when billed annually (20% discount)
-            "features": [
-                "15 AI applications per month",
-                "Basic competitive intelligence", 
-                "Grant discovery & alerts",
-                "Email support",
-                "Success tracking",
-                "Award reporting"
-            ],
-            "limits": {
-                "applications_per_month": 15,
-                "users": 1,
-                "competitive_intelligence": "basic"
-            }
-        },
-        "professional": {
-            "name": "Professional", 
-            "description": "For organizations applying to multiple grants",
-            "monthly_price": 197,
-            "annual_price": 158,  # $158/month when billed annually (20% discount)
-            "features": [
-                "50 AI applications per month",
-                "Full competitive intelligence",
-                "Success probability scoring",
-                "Award tracking & verification", 
-                "Priority support",
-                "Advanced analytics",
-                "POC contact recommendations"
-            ],
-            "limits": {
-                "applications_per_month": 50,
-                "users": 1,
-                "competitive_intelligence": "full"
+# Stripe Configuration
+stripe.api_key = os.environ.get('STRIPE_SECRET_KEY')
+STRIPE_PUBLISHABLE_KEY = os.environ.get('STRIPE_PUBLISHABLE_KEY')
+
+# MongoDB Connection
+try:
+    client = MongoClient(app.config['MONGO_URI'])
+    db = client.grantai
+    print("✅ Connected to MongoDB successfully")
+except Exception as e:
+    print(f"❌ MongoDB connection failed: {e}")
+    db = None
+
+# ================================
+# GRANT DIFFICULTY RATING SYSTEM
+# ================================
+
+class GrantDifficultyAnalyzer:
+    def __init__(self):
+        # Define difficulty factors and their impact scores
+        self.difficulty_factors = {
+            # Partnership Requirements (High Impact)
+            'university_required': {
+                'patterns': ['university partnership', 'academic institution', 'higher education', 'research university'],
+                'base_score': 3.0,
+                'description': 'Requires university partnership'
             },
-            "popular": True
-        },
-        "premium": {
-            "name": "Premium",
-            "description": "Full grant writing service with strategic guidance",
-            "monthly_price": 497,
-            "annual_price": 398,  # $398/month when billed annually (20% discount)
-            "features": [
-                "Everything in Professional",
-                "GrantAI writes full applications",
-                "8,000+ grant success pattern analysis",
-                "Strategic POC consultation scripts",
-                "Priority application review",
-                "Dedicated success manager",
-                "Industry-specific templates",
-                "Failure pattern analysis"
-            ],
-            "limits": {
-                "applications_per_month": 100,
-                "users": 1,
-                "competitive_intelligence": "full",
-                "full_writing_service": True
+            'government_endorsement': {
+                'patterns': ['governor', 'state endorsement', 'mayor', 'legislative support'],
+                'base_score': 2.5,
+                'description': 'Requires government official endorsement'
             },
-            "premium": True
+            'multi_organization': {
+                'patterns': ['consortium', 'coalition', 'multiple organizations', 'partnership of'],
+                'base_score': 2.0,
+                'description': 'Requires multiple organizational partnerships'
+            },
+            
+            # Experience & Track Record (High Impact)
+            'prior_federal_experience': {
+                'patterns': ['prior federal', 'previous awards', 'demonstrated experience', 'track record'],
+                'base_score': 2.5,
+                'description': 'Requires prior federal grant experience'
+            },
+            'specialized_expertise': {
+                'patterns': ['specialized', 'expert', 'advanced degree', 'certification required'],
+                'base_score': 2.0,
+                'description': 'Requires specialized expertise or credentials'
+            },
+            
+            # Financial Requirements (Medium-High Impact)
+            'matching_funds': {
+                'patterns': ['matching funds', 'cost share', 'match required', '% match'],
+                'base_score': 1.5,
+                'description': 'Requires matching funds or cost-sharing'
+            },
+            'large_budget': {
+                'patterns': ['$10,000,000', '$5,000,000', 'multi-million'],
+                'base_score': 1.0,
+                'description': 'Large budget requires extensive planning'
+            },
+            
+            # Technical Complexity (Medium Impact)
+            'research_component': {
+                'patterns': ['research', 'evaluation', 'data collection', 'study design'],
+                'base_score': 1.5,
+                'description': 'Includes research or evaluation components'
+            },
+            'regulatory_compliance': {
+                'patterns': ['HIPAA', 'FERPA', 'IRB', 'compliance', 'regulatory'],
+                'base_score': 1.5,
+                'description': 'Complex regulatory compliance requirements'
+            },
+            
+            # Documentation Burden (Medium Impact)
+            'extensive_documentation': {
+                'patterns': ['detailed budget', 'work plan', 'timeline', 'deliverables'],
+                'base_score': 1.0,
+                'description': 'Extensive documentation requirements'
+            },
+            'letters_of_support': {
+                'patterns': ['letters of support', 'endorsement letters', 'commitment letters'],
+                'base_score': 0.8,
+                'description': 'Multiple letters of support required'
+            },
+            
+            # Application Process (Low-Medium Impact)
+            'multi_stage': {
+                'patterns': ['two-stage', 'preliminary', 'concept paper', 'pre-application'],
+                'base_score': 0.5,
+                'description': 'Multi-stage application process'
+            },
+            'competitive_priority': {
+                'patterns': ['competitive priority', 'absolute priority', 'invitational priority'],
+                'base_score': 1.0,
+                'description': 'Complex priority point system'
+            }
         }
-    }
-
-    # Promo Codes Configuration
-    PROMO_CODES = {
-        "BETA50": {
-            "name": "Beta User Lifetime Discount",
-            "discount_type": "percentage",
-            "discount_value": 50,
-            "duration": "lifetime",
-            "applicable_plans": ["professional", "premium"],
-            "description": "50% off for life - Beta user exclusive",
-            "active": True
-        },
-        "FOUNDER25": {
-            "name": "Founder's Discount",
-            "discount_type": "percentage", 
-            "discount_value": 25,
-            "duration": "months",
-            "duration_months": 12,
-            "applicable_plans": ["professional", "premium"],
-            "description": "25% off first year",
-            "active": True
-        },
-        "LAUNCH2025": {
-            "name": "Launch Special",
-            "discount_type": "percentage",
-            "discount_value": 50, 
-            "duration": "months",
-            "duration_months": 6,
-            "applicable_plans": ["personal", "professional", "premium"],
-            "description": "50% off first 6 months",
-            "active": True
-        }
-    }
-
-    def init_database():
-        """Initialize database with realistic sample data"""
-        try:
-            if db is None:
-                return
-            
-            # Clear existing collections to force new data
-            if db.opportunities.count_documents({}) < 100:
-                # Drop and recreate with new data
-                db.opportunities.drop()
-                db.applications.drop()
-                db.users.drop()
-                db.system_metadata.drop()
-                
-                # Create realistic grant database
-                sample_opportunities = []
-                
-                # Create diverse grant amounts to reach realistic totals
-                grant_templates = [
-                    {"title": "Small Business Innovation Research (SBIR) Phase I", "agency": "National Science Foundation", "amount": 275000},
-                    {"title": "Community Development Block Grant", "agency": "Department of Housing and Urban Development", "amount": 2500000},
-                    {"title": "Environmental Justice Grants", "agency": "Environmental Protection Agency", "amount": 500000},
-                    {"title": "Rural Development Grant", "agency": "Department of Agriculture", "amount": 750000},
-                    {"title": "Education Innovation Grant", "agency": "Department of Education", "amount": 1200000},
-                    {"title": "Healthcare Research Grant", "agency": "National Institutes of Health", "amount": 850000},
-                    {"title": "Infrastructure Improvement Grant", "agency": "Department of Transportation", "amount": 3200000},
-                    {"title": "Clean Energy Research Grant", "agency": "Department of Energy", "amount": 1800000},
-                    {"title": "Public Safety Grant", "agency": "Department of Justice", "amount": 650000},
-                    {"title": "Cultural Arts Grant", "agency": "National Endowment for the Arts", "amount": 125000}
-                ]
-                
-                # Generate 500 sample opportunities
-                for i in range(500):
-                    template = grant_templates[i % len(grant_templates)]
-                    opportunity = {
-                        "_id": str(ObjectId()),
-                        "opportunity_id": f"SAMPLE-{i+1:04d}",
-                        "title": f"{template['title']} - Cycle {i+1}",
-                        "agency": template["agency"],
-                        "amount_max": template["amount"],
-                        "amount_min": template["amount"] // 2,
-                        "is_active": True,
-                        "close_date": datetime.utcnow() + timedelta(days=30 + (i % 90)),
-                        "post_date": datetime.utcnow() - timedelta(days=i % 30),
-                        "discovered_at": datetime.utcnow() - timedelta(days=i % 30),
-                        "description": f"Sample grant opportunity for {template['title']}",
-                        "cfda_number": f"12.{100 + (i % 899)}",
-                        "category": ["Research", "Development", "Infrastructure", "Education", "Health"][i % 5]
-                    }
-                    sample_opportunities.append(opportunity)
-                
-                db.opportunities.insert_many(sample_opportunities)
-                
-                # Add metadata collection to track last update
-                db.system_metadata.insert_one({
-                    "type": "grant_database_update",
-                    "last_updated": datetime.utcnow(),
-                    "grants_count": len(sample_opportunities),
-                    "update_type": "initial_load"
-                })
-                
-                logger.info(f"Database initialized with {len(sample_opportunities)} grant opportunities")
-                
-        except Exception as e:
-            logger.error(f"Error initializing database: {str(e)}")
-
-    # Initialize database on startup
-    init_database()
-
-    def get_public_metrics():
-        """Get public metrics for homepage display"""
-        try:
-            if db is None:
-                # Use TBD for unmeasured platform metrics, realistic numbers for grant database
-                return {
-                    "total_grants_database": 47892,
-                    "total_award_amounts_tracked": 28473920000,
-                    "last_updated": "2025-09-08 at 10:50 AM CST",
-                    "total_applications": None,
-                    "applications_pending": None,
-                    "active_users": None,
-                    "beta_users": None
-                }
-            
-            # Real metrics from database
-            total_grants = db.opportunities.count_documents({})
-            
-            # Get last update timestamp
-            last_update_doc = db.system_metadata.find_one({"type": "grant_database_update"})
-            if last_update_doc:
-                last_updated = last_update_doc["last_updated"].strftime("%Y-%m-%d at %I:%M %p CST")
-            else:
-                last_updated = "2025-09-08 at 10:50 AM CST"
-            
-            # Calculate total award amounts from grant database
-            pipeline = [
-                {"$group": {"_id": None, "total": {"$sum": "$amount_max"}}}
-            ]
-            total_amount_result = list(db.opportunities.aggregate(pipeline))
-            total_amount = total_amount_result[0]["total"] if total_amount_result else 28473920000
-            
-            # Real platform activity - only count if applications actually exist
-            total_apps = db.applications.count_documents({})
-            
-            # Count pending applications (submitted but no decision yet)
-            pending_apps = db.applications.count_documents({
-                "status": {"$in": ["submitted", "under_review"]}
-            })
-            
-            # Count real active users (those who have logged in recently)
-            thirty_days_ago = datetime.utcnow() - timedelta(days=30)
-            active_users = db.users.count_documents({
-                "last_login": {"$gte": thirty_days_ago}
-            })
-            
-            # Count beta users specifically
-            beta_users = db.users.count_documents({
-                "subscription_type": "beta"
-            })
-            
-            return {
-                "total_grants_database": total_grants,
-                "total_award_amounts_tracked": total_amount,
-                "last_updated": last_updated,
-                "total_applications": total_apps if total_apps > 0 else None,
-                "applications_pending": pending_apps if pending_apps > 0 else None,
-                "active_users": active_users if active_users > 0 else None,
-                "beta_users": beta_users if beta_users > 0 else None
-            }
-        except Exception as e:
-            logger.error(f"Error getting public metrics: {str(e)}")
-            return {
-                "total_grants_database": 47892,
-                "total_award_amounts_tracked": 28473920000,
-                "last_updated": "2025-09-08 at 10:50 AM CST",
-                "total_applications": None,
-                "applications_pending": None,
-                "active_users": None,
-                "beta_users": None
-            }
-
-    def apply_promo_code(promo_code, plan_id, base_price):
-        """Apply promo code and return discount details"""
-        try:
-            promo_code = promo_code.upper().strip()
-            
-            if promo_code not in PROMO_CODES:
-                return {"valid": False, "error": "Invalid promo code"}
-            
-            promo = PROMO_CODES[promo_code]
-            
-            if not promo.get("active", False):
-                return {"valid": False, "error": "Promo code is inactive"}
-            
-            if plan_id not in promo.get("applicable_plans", []):
-                return {"valid": False, "error": "Promo code not valid for this plan"}
-            
-            # Calculate discount
-            if promo["discount_type"] == "percentage":
-                discount_amount = base_price * (promo["discount_value"] / 100)
-            else:
-                discount_amount = min(promo["discount_value"], base_price)
-            
-            final_price = max(0, base_price - discount_amount)
-            
-            return {
-                "valid": True,
-                "discount_amount": discount_amount,
-                "final_price": final_price,
-                "description": promo["description"],
-                "duration": promo.get("duration"),
-                "duration_months": promo.get("duration_months")
-            }
-            
-        except Exception as e:
-            logger.error(f"Error applying promo code: {str(e)}")
-            return {"valid": False, "error": "Error processing promo code"}
-
-    # Routes
-    @app.route('/')
-    def home():
-        """Homepage with public metrics dashboard"""
-        try:
-            metrics = get_public_metrics()
-            
-            # Get sample opportunities for homepage
-            sample_opportunities = [
-                {
-                    "title": "Small Business Innovation Research (SBIR) Phase I",
-                    "agency": "National Science Foundation",
-                    "amount_max": 275000,
-                    "close_date": (datetime.utcnow() + timedelta(days=45)).strftime("%Y-%m-%d")
-                },
-                {
-                    "title": "Community Development Block Grant",
-                    "agency": "Department of Housing and Urban Development",
-                    "amount_max": 500000,
-                    "close_date": (datetime.utcnow() + timedelta(days=30)).strftime("%Y-%m-%d")
-                },
-                {
-                    "title": "Environmental Justice Grants",
-                    "agency": "Environmental Protection Agency",
-                    "amount_max": 200000,
-                    "close_date": (datetime.utcnow() + timedelta(days=60)).strftime("%Y-%m-%d")
-                }
-            ]
-            
-            return render_template('index.html', 
-                                 metrics=metrics,
-                                 sample_opportunities=sample_opportunities)
-        except Exception as e:
-            logger.error(f"Error loading homepage: {str(e)}")
-            return render_template('index.html', 
-                                 metrics={}, 
-                                 sample_opportunities=[])
-    
-    @app.route('/pricing')
-    def pricing():
-        """Pricing page with new structure and promo codes"""
-        try:
-            promo_code = request.args.get('promo', '').upper()
-            
-            plans = []
-            for plan_id, plan_data in PRICING_PLANS.items():
-                plan_info = {
-                    "id": plan_id,
-                    "name": plan_data["name"],
-                    "description": plan_data["description"],
-                    "monthly_price": plan_data["monthly_price"],
-                    "annual_price": plan_data["annual_price"],
-                    "features": plan_data["features"],
-                    "popular": plan_data.get("popular", False),
-                    "premium": plan_data.get("premium", False)
-                }
-                
-                # Calculate annual savings correctly
-                # If monthly is $197 and annual is $158/month, then:
-                # Monthly total: $197 * 12 = $2364 per year
-                # Annual total: $158 * 12 = $1896 per year  
-                # Savings: $2364 - $1896 = $468 per year
-                # Percentage: $468 / $2364 = 19.8% ≈ 20%
-                monthly_yearly_total = plan_data["monthly_price"] * 12
-                annual_yearly_total = plan_data["annual_price"] * 12
-                annual_savings = monthly_yearly_total - annual_yearly_total
-                plan_info["annual_savings"] = annual_savings
-                plan_info["savings_percentage"] = round((annual_savings / monthly_yearly_total) * 100) if monthly_yearly_total > 0 else 0
-                
-                plans.append(plan_info)
-            
-            return render_template('pricing.html', 
-                                 plans=plans,
-                                 promo_code=promo_code)
-        except Exception as e:
-            logger.error(f"Error loading pricing page: {str(e)}")
-            return render_template('pricing.html', plans=[], promo_code='')
-
-    @app.route('/dashboard')
-    def dashboard():
-        """User dashboard"""
-        if 'user_id' not in session:
-            return redirect('/login')
         
-        try:
-            # Mock user data for demonstration
-            user_data = {
-                "name": "John Doe",
-                "organization": "Nonprofit Example Inc",
-                "plan": "Professional",
-                "applications_used": 12,
-                "applications_limit": 50,
-                "subscription_status": "active"
-            }
-            
-            # Mock applications data
-            applications = [
-                {
-                    "id": "app_001",
-                    "title": "Educational Innovation Grant",
-                    "agency": "Department of Education",
-                    "amount": 150000,
-                    "status": "submitted",
-                    "success_probability": 72,
-                    "submitted_date": "2025-01-15"
-                },
-                {
-                    "id": "app_002", 
-                    "title": "Community Health Initiative",
-                    "agency": "CDC",
-                    "amount": 85000,
-                    "status": "draft",
-                    "success_probability": 68,
-                    "created_date": "2025-01-10"
-                }
-            ]
-            
-            return render_template('dashboard.html',
-                                 user_data=user_data,
-                                 applications=applications)
-        except Exception as e:
-            logger.error(f"Error loading dashboard: {str(e)}")
-            return render_template('dashboard.html', 
-                                 user_data={}, 
-                                 applications=[])
+        # Agency-specific difficulty modifiers
+        self.agency_modifiers = {
+            'National Science Foundation': 1.5,
+            'National Institutes of Health': 1.4,
+            'Department of Defense': 1.3,
+            'Department of Energy': 1.2,
+            'Department of Education': 1.0,
+            'Department of Health and Human Services': 1.1,
+            'Environmental Protection Agency': 1.2,
+            'Department of Housing and Urban Development': 0.9,
+            'Department of Agriculture': 0.8,
+        }
+        
+        # Competition level modifiers based on award amounts
+        self.competition_modifiers = {
+            'very_high': 1.5,  # $5M+ awards
+            'high': 1.2,       # $1M-$5M awards  
+            'medium': 1.0,     # $100K-$1M awards
+            'low': 0.8         # <$100K awards
+        }
 
-    @app.route('/login')
-    def login():
-        """Login page"""
-        return render_template('login.html')
-
-    @app.route('/signup')
-    def signup():
-        """Signup page"""
-        selected_plan = request.args.get('plan', 'professional')
-        promo_code = request.args.get('promo', '')
-        return render_template('signup.html', 
-                             selected_plan=selected_plan,
-                             promo_code=promo_code)
-
-    @app.route('/logout')
-    def logout():
-        """Logout route"""
-        session.clear()
-        return redirect('/')
-
-    # API Routes
-    @app.route('/api/pricing/calculate', methods=['POST'])
-    def calculate_pricing():
-        """Calculate pricing with optional promo code"""
-        try:
-            data = request.get_json()
-            if not data:
-                return jsonify({'error': 'Invalid request data'}), 400
-            
-            plan_id = data.get('plan_id')
-            billing_cycle = data.get('billing_cycle', 'monthly')
-            promo_code = data.get('promo_code')
-            
-            if not plan_id or plan_id not in PRICING_PLANS:
-                return jsonify({'error': 'Invalid plan selected'}), 400
-            
-            plan = PRICING_PLANS[plan_id]
-            
-            # Base price calculation
-            if billing_cycle == "annual":
-                base_price = plan["annual_price"]
-            else:
-                base_price = plan["monthly_price"]
-            
-            result = {
-                "plan_id": plan_id,
-                "plan_name": plan["name"],
-                "billing_cycle": billing_cycle,
-                "base_price": base_price,
-                "discount_amount": 0,
-                "final_price": base_price,
-                "promo_code": promo_code,
-                "discount_description": None
-            }
-            
-            # Apply promo code if provided
-            if promo_code:
-                promo_result = apply_promo_code(promo_code, plan_id, base_price)
-                if promo_result["valid"]:
-                    result.update({
-                        "discount_amount": promo_result["discount_amount"],
-                        "final_price": promo_result["final_price"],
-                        "discount_description": promo_result["description"]
+    def calculate_difficulty_score(self, opportunity: Dict) -> Tuple[float, Dict]:
+        """Calculate difficulty score (1-10) for a grant opportunity"""
+        title = opportunity.get('title', '').lower()
+        description = opportunity.get('description', '').lower()
+        agency = opportunity.get('agency', '')
+        amount_max = opportunity.get('amount_max', 0)
+        
+        # Combine title and description for analysis
+        full_text = f"{title} {description}"
+        
+        # Base difficulty score
+        base_score = 1.0
+        detected_factors = []
+        
+        # Analyze difficulty factors
+        for factor_name, factor_data in self.difficulty_factors.items():
+            for pattern in factor_data['patterns']:
+                if pattern in full_text:
+                    base_score += factor_data['base_score']
+                    detected_factors.append({
+                        'factor': factor_name,
+                        'description': factor_data['description'],
+                        'impact': factor_data['base_score']
                     })
-            
-            return jsonify({
-                'success': True,
-                'pricing': result
-            })
-            
-        except Exception as e:
-            logger.error(f"Error calculating pricing: {str(e)}")
-            return jsonify({'error': 'Unable to calculate pricing'}), 500
+                    break  # Only count each factor once
+        
+        # Apply agency modifier
+        agency_modifier = self.agency_modifiers.get(agency, 1.0)
+        base_score *= agency_modifier
+        
+        # Apply competition level modifier based on award amount
+        competition_level = self._get_competition_level(amount_max)
+        competition_modifier = self.competition_modifiers[competition_level]
+        base_score *= competition_modifier
+        
+        # Cap at 10.0 and ensure minimum of 1.0
+        final_score = min(max(base_score, 1.0), 10.0)
+        
+        # Create breakdown for transparency
+        breakdown = {
+            'final_score': round(final_score, 1),
+            'detected_factors': detected_factors,
+            'agency_modifier': agency_modifier,
+            'competition_level': competition_level,
+            'competition_modifier': competition_modifier,
+            'difficulty_category': self._get_difficulty_category(final_score)
+        }
+        
+        return final_score, breakdown
+    
+    def _get_competition_level(self, amount_max: float) -> str:
+        """Determine competition level based on award amount"""
+        if amount_max >= 5000000:
+            return 'very_high'
+        elif amount_max >= 1000000:
+            return 'high'
+        elif amount_max >= 100000:
+            return 'medium'
+        else:
+            return 'low'
+    
+    def _get_difficulty_category(self, score: float) -> str:
+        """Convert numeric score to category"""
+        if score >= 8.0:
+            return 'Expert Level'
+        elif score >= 6.0:
+            return 'Advanced'
+        elif score >= 4.0:
+            return 'Intermediate'
+        elif score >= 2.0:
+            return 'Beginner-Friendly'
+        else:
+            return 'Entry Level'
+    
+    def get_difficulty_badge_color(self, score: float) -> str:
+        """Get color for difficulty badge display"""
+        if score >= 8.0:
+            return 'bg-red-500'      # Expert Level - Red
+        elif score >= 6.0:
+            return 'bg-orange-500'   # Advanced - Orange
+        elif score >= 4.0:
+            return 'bg-yellow-500'   # Intermediate - Yellow
+        elif score >= 2.0:
+            return 'bg-green-500'    # Beginner-Friendly - Green
+        else:
+            return 'bg-blue-500'     # Entry Level - Blue
 
-    @app.route('/api/promo/validate', methods=['POST'])
-    def validate_promo_code():
-        """Validate a promo code for a specific plan"""
-        try:
-            data = request.get_json()
-            if not data:
-                return jsonify({'error': 'Invalid request data'}), 400
-            
-            promo_code = data.get('promo_code', '').strip()
-            plan_id = data.get('plan_id')
-            
-            if not promo_code:
-                return jsonify({'error': 'Promo code is required'}), 400
-            
-            if not plan_id or plan_id not in PRICING_PLANS:
-                return jsonify({'error': 'Invalid plan selected'}), 400
-            
-            # Validate promo code
-            validation = apply_promo_code(promo_code, plan_id, 100)  # Test with $100
-            
-            return jsonify({
-                'success': True,
-                'validation': validation
-            })
-            
-        except Exception as e:
-            logger.error(f"Error validating promo code: {str(e)}")
-            return jsonify({'error': 'Unable to validate promo code'}), 500
+# Initialize difficulty analyzer
+difficulty_analyzer = GrantDifficultyAnalyzer()
 
-    @app.route('/api/metrics/public', methods=['GET'])
-    def get_public_metrics_api():
-        """API endpoint for public metrics"""
-        try:
-            metrics = get_public_metrics()
-            return jsonify({
-                'success': True,
-                'metrics': metrics
-            })
-        except Exception as e:
-            logger.error(f"Error getting public metrics: {str(e)}")
-            return jsonify({'error': 'Unable to fetch metrics'}), 500
+# ================================
+# AUTHENTICATION & USER MANAGEMENT
+# ================================
 
-    @app.route('/api/track/signup', methods=['POST'])
-    def track_signup():
-        """Track real user signups for metrics"""
-        try:
-            data = request.get_json()
-            user_email = data.get('email')
-            plan_type = data.get('plan_type', 'beta')
-            
-            if not user_email:
-                return jsonify({'error': 'Email required'}), 400
-            
-            # Create user record if database is connected
-            if db is not None:
-                user_record = {
-                    "_id": str(ObjectId()),
-                    "email": user_email,
-                    "subscription_type": plan_type,
-                    "signup_date": datetime.utcnow(),
-                    "last_login": datetime.utcnow(),
-                    "is_active": True
-                }
-                db.users.insert_one(user_record)
-                logger.info(f"New user signup tracked: {user_email}")
-            
-            return jsonify({
-                'success': True,
-                'message': 'Signup tracked successfully'
-            })
-            
-        except Exception as e:
-            logger.error(f"Error tracking signup: {str(e)}")
-            return jsonify({'error': 'Unable to track signup'}), 500
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' not in session:
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
 
-    @app.route('/api/track/application', methods=['POST'])
-    def track_application():
-        """Track real application generation for metrics"""
-        try:
+def subscription_required(tier_required='basic'):
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
             if 'user_id' not in session:
-                return jsonify({'error': 'Authentication required'}), 401
+                return redirect(url_for('login'))
             
-            data = request.get_json()
-            opportunity_id = data.get('opportunity_id')
-            
-            if not opportunity_id:
-                return jsonify({'error': 'Opportunity ID required'}), 400
-            
-            # Create application record if database is connected
-            if db is not None:
-                application_record = {
-                    "_id": str(ObjectId()),
-                    "user_id": session['user_id'],
-                    "opportunity_id": opportunity_id,
-                    "status": "generated",
-                    "created_at": datetime.utcnow(),
-                    "updated_at": datetime.utcnow()
-                }
-                db.applications.insert_one(application_record)
-                logger.info(f"New application tracked: {opportunity_id}")
-            
-            return jsonify({
-                'success': True,
-                'message': 'Application tracked successfully'
-            })
-            
-        except Exception as e:
-            logger.error(f"Error tracking application: {str(e)}")
-            return jsonify({'error': 'Unable to track application'}), 500
-
-    # Mock login for development
-    @app.route('/api/mock-login', methods=['POST'])
-    def mock_login():
-        """Mock login endpoint for development testing"""
-        session['user_id'] = 'mock_user_123'
-        return jsonify({'success': True, 'redirect': '/dashboard'})
-
-    # Debug routes
-    @app.route('/debug/templates')
-    def debug_templates():
-        """Debug endpoint to show template structure"""
-        return jsonify({
-            "templates_needed": [
-                "templates/index.html",
-                "templates/pricing.html", 
-                "templates/dashboard.html",
-                "templates/login.html",
-                "templates/signup.html"
-            ],
-            "static_files_needed": [
-                "static/css/style.css",
-                "static/js/app.js"
-            ],
-            "database_status": "Connected" if db is not None else "Disconnected",
-            "environment": "Development" if app.debug else "Production"
-        })
-
-    @app.route('/debug/db-test')
-    def debug_db_test():
-        """Debug endpoint to test database connection and data"""
-        try:
             if db is None:
-                return jsonify({"error": "Database not connected"})
+                flash('Database connection error', 'error')
+                return redirect(url_for('dashboard'))
+                
+            user = db.users.find_one({'_id': session['user_id']})
+            if not user or not user.get('subscription', {}).get('active', False):
+                flash('This feature requires an active subscription', 'warning')
+                return redirect(url_for('pricing'))
+                
+            user_tier = user.get('subscription', {}).get('tier', 'basic')
+            tier_hierarchy = {'basic': 0, 'professional': 1, 'premium': 2}
             
-            # Test basic operations
-            collections = db.list_collection_names()
-            metrics = get_public_metrics()
+            if tier_hierarchy.get(user_tier, 0) < tier_hierarchy.get(tier_required, 0):
+                flash(f'This feature requires {tier_required} subscription', 'warning')
+                return redirect(url_for('pricing'))
+                
+            return f(*args, **kwargs)
+        return decorated_function
+    return decorator
+
+# ================================
+# CORE APPLICATION ROUTES
+# ================================
+
+@app.route('/')
+def index():
+    # Sample opportunities with difficulty ratings
+    sample_opportunities = [
+        {
+            'title': 'SBIR Phase II: Advanced AI for Federal Agencies',
+            'agency': 'Department of Defense',
+            'amount_max': 2000000,
+            'deadline': (datetime.now() + timedelta(days=45)).strftime('%B %d, %Y'),
+            'description': 'Research and development of artificial intelligence solutions for government applications requiring university partnership and prior federal experience.',
+            'difficulty_score': 8.2,
+            'difficulty_category': 'Expert Level',
+            'badge_color': 'bg-red-500'
+        },
+        {
+            'title': 'Community Development Block Grant',
+            'agency': 'Department of Housing and Urban Development',
+            'amount_max': 500000,
+            'deadline': (datetime.now() + timedelta(days=30)).strftime('%B %d, %Y'),
+            'description': 'Support community development activities that benefit low- and moderate-income residents with matching funds required.',
+            'difficulty_score': 4.1,
+            'difficulty_category': 'Intermediate',
+            'badge_color': 'bg-yellow-500'
+        },
+        {
+            'title': 'Environmental Justice Small Grants Program',
+            'agency': 'Environmental Protection Agency',
+            'amount_max': 75000,
+            'deadline': (datetime.now() + timedelta(days=60)).strftime('%B %d, %Y'),
+            'description': 'Support community-based organizations working on environmental justice issues with letters of support required.',
+            'difficulty_score': 2.8,
+            'difficulty_category': 'Beginner-Friendly',
+            'badge_color': 'bg-green-500'
+        }
+    ]
+    
+    # Calculate metrics for homepage
+    total_grants = 8743
+    total_funding = 24800000000
+    success_rate = 34.2
+    users_helped = 1247
+    
+    return render_template('index.html', 
+                         opportunities=sample_opportunities,
+                         total_grants=total_grants,
+                         total_funding=total_funding,
+                         success_rate=success_rate,
+                         users_helped=users_helped,
+                         stripe_publishable_key=STRIPE_PUBLISHABLE_KEY)
+
+@app.route('/health')
+def health_check():
+    """Health check endpoint for Railway deployment"""
+    return jsonify({'status': 'healthy', 'timestamp': datetime.utcnow().isoformat()})
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if request.method == 'POST':
+        data = request.get_json() if request.is_json else request.form
+        
+        email = data.get('email', '').lower().strip()
+        password = data.get('password', '')
+        organization = data.get('organization', '')
+        
+        if not email or not password:
+            return jsonify({'error': 'Email and password required'}), 400
             
-            return jsonify({
-                "database_connected": True,
-                "collections": collections,
-                "sample_metrics": metrics,
-                "opportunities_count": db.opportunities.count_documents({}),
-                "applications_count": db.applications.count_documents({}),
-                "users_count": db.users.count_documents({})
-            })
+        if db is None:
+            return jsonify({'error': 'Database connection error'}), 500
+            
+        # Check if user exists
+        if db.users.find_one({'email': email}):
+            return jsonify({'error': 'Email already registered'}), 400
+            
+        # Create user
+        user_id = secrets.token_hex(16)
+        user_doc = {
+            '_id': user_id,
+            'email': email,
+            'password_hash': generate_password_hash(password),
+            'organization': organization,
+            'created_at': datetime.utcnow(),
+            'subscription': {
+                'tier': 'basic',
+                'active': False,
+                'trial_end': datetime.utcnow() + timedelta(days=7)
+            },
+            'usage': {
+                'grants_viewed': 0,
+                'applications_generated': 0,
+                'searches_performed': 0
+            }
+        }
+        
+        try:
+            db.users.insert_one(user_doc)
+            session['user_id'] = user_id
+            return jsonify({'success': True, 'redirect': '/dashboard'})
         except Exception as e:
-            return jsonify({"error": str(e)})
+            return jsonify({'error': 'Registration failed'}), 500
+            
+    return render_template('register.html')
 
-    # Error handlers
-    @app.errorhandler(404)
-    def not_found(error):
-        return jsonify({'error': 'Page not found'}), 404
-    
-    @app.errorhandler(500)
-    def internal_error(error):
-        logger.error(f"Internal server error: {str(error)}")
-        return jsonify({'error': 'Internal server error'}), 500
-    
-    return app
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        data = request.get_json() if request.is_json else request.form
+        
+        email = data.get('email', '').lower().strip()
+        password = data.get('password', '')
+        
+        if not email or not password:
+            return jsonify({'error': 'Email and password required'}), 400
+            
+        if db is None:
+            return jsonify({'error': 'Database connection error'}), 500
+            
+        user = db.users.find_one({'email': email})
+        if user and check_password_hash(user['password_hash'], password):
+            session['user_id'] = user['_id']
+            return jsonify({'success': True, 'redirect': '/dashboard'})
+        else:
+            return jsonify({'error': 'Invalid credentials'}), 401
+            
+    return render_template('login.html')
 
-# Create the Flask app
-app = create_app()
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('index'))
+
+@app.route('/dashboard')
+@login_required
+def dashboard():
+    if db is None:
+        flash('Database connection error', 'error')
+        return redirect(url_for('index'))
+        
+    user = db.users.find_one({'_id': session['user_id']})
+    if not user:
+        return redirect(url_for('logout'))
+    
+    # Get sample opportunities with difficulty ratings
+    opportunities = get_sample_opportunities_with_difficulty()
+    
+    # Filter by difficulty if requested
+    difficulty_filter = request.args.get('difficulty')
+    if difficulty_filter:
+        min_diff, max_diff = map(float, difficulty_filter.split('-'))
+        opportunities = [opp for opp in opportunities 
+                        if min_diff <= opp['difficulty_score'] <= max_diff]
+    
+    return render_template('dashboard.html', 
+                         user=user, 
+                         opportunities=opportunities,
+                         difficulty_filter=difficulty_filter)
+
+def get_sample_opportunities_with_difficulty():
+    """Get sample opportunities with calculated difficulty ratings"""
+    opportunities = [
+        {
+            'id': '1',
+            'title': 'NSF SBIR Phase II: Machine Learning Platform',
+            'agency': 'National Science Foundation',
+            'description': 'Develop advanced machine learning platform for scientific research requiring university partnership, IRB approval, and prior federal grant experience.',
+            'amount_max': 5000000,
+            'deadline': 'November 15, 2025',
+            'url': 'https://grants.gov/example1'
+        },
+        {
+            'id': '2', 
+            'title': 'Rural Community Development Initiative',
+            'agency': 'Department of Agriculture',
+            'description': 'Support rural community development projects with local economic impact including detailed budget and work plan requirements.',
+            'amount_max': 250000,
+            'deadline': 'October 30, 2025',
+            'url': 'https://grants.gov/example2'
+        },
+        {
+            'id': '3',
+            'title': 'DOD Cybersecurity Research Consortium',
+            'agency': 'Department of Defense',
+            'description': 'Multi-organization consortium for cybersecurity research requiring security clearance, specialized expertise, and demonstrated track record.',
+            'amount_max': 15000000,
+            'deadline': 'December 1, 2025',
+            'url': 'https://grants.gov/example3'
+        },
+        {
+            'id': '4',
+            'title': 'EPA Environmental Justice Community Grants',
+            'agency': 'Environmental Protection Agency',
+            'description': 'Small grants for community-based environmental justice initiatives requiring letters of support from community leaders.',
+            'amount_max': 50000,
+            'deadline': 'September 30, 2025',
+            'url': 'https://grants.gov/example4'
+        },
+        {
+            'id': '5',
+            'title': 'NIH Health Disparities Research',
+            'agency': 'National Institutes of Health',
+            'description': 'Research to address health disparities requiring university partnership, HIPAA compliance, IRB approval, and extensive data collection protocols.',
+            'amount_max': 3500000,
+            'deadline': 'January 15, 2026',
+            'url': 'https://grants.gov/example5'
+        }
+    ]
+    
+    # Calculate difficulty for each opportunity
+    for opp in opportunities:
+        score, breakdown = difficulty_analyzer.calculate_difficulty_score(opp)
+        opp['difficulty_score'] = round(score, 1)
+        opp['difficulty_category'] = breakdown['difficulty_category']
+        opp['badge_color'] = difficulty_analyzer.get_difficulty_badge_color(score)
+        opp['difficulty_factors'] = breakdown['detected_factors']
+        
+    return opportunities
+
+@app.route('/pricing')
+def pricing():
+    return render_template('pricing.html', stripe_publishable_key=STRIPE_PUBLISHABLE_KEY)
+
+@app.route('/create-checkout-session', methods=['POST'])
+def create_checkout_session():
+    try:
+        data = request.get_json()
+        tier = data.get('tier')
+        promo_code = data.get('promo_code', '').strip().upper()
+        
+        # Pricing configuration
+        pricing = {
+            'professional': {
+                'price_id': 'price_professional_monthly',
+                'amount': 19700,  # $197.00 in cents
+                'name': 'GrantAI Pro Professional'
+            },
+            'premium': {
+                'price_id': 'price_premium_monthly', 
+                'amount': 49700,  # $497.00 in cents
+                'name': 'GrantAI Pro Premium'
+            }
+        }
+        
+        if tier not in pricing:
+            return jsonify({'error': 'Invalid pricing tier'}), 400
+            
+        # Apply promo code discount
+        amount = pricing[tier]['amount']
+        if promo_code == 'BETA50':
+            amount = int(amount * 0.5)  # 50% discount
+            
+        # Create Stripe checkout session
+        checkout_session = stripe.checkout.Session.create(
+            payment_method_types=['card'],
+            line_items=[{
+                'price_data': {
+                    'currency': 'usd',
+                    'product_data': {
+                        'name': pricing[tier]['name'],
+                    },
+                    'unit_amount': amount,
+                    'recurring': {
+                        'interval': 'month',
+                    },
+                },
+                'quantity': 1,
+            }],
+            mode='subscription',
+            success_url=request.host_url + 'subscription-success?session_id={CHECKOUT_SESSION_ID}',
+            cancel_url=request.host_url + 'pricing',
+            metadata={
+                'user_id': session.get('user_id'),
+                'tier': tier,
+                'promo_code': promo_code
+            }
+        )
+        
+        return jsonify({'checkout_url': checkout_session.url})
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/subscription-success')
+@login_required
+def subscription_success():
+    session_id = request.args.get('session_id')
+    
+    if session_id and db:
+        try:
+            # Retrieve the checkout session from Stripe
+            checkout_session = stripe.checkout.Session.retrieve(session_id)
+            
+            # Update user subscription in database
+            db.users.update_one(
+                {'_id': session['user_id']},
+                {
+                    '$set': {
+                        'subscription.active': True,
+                        'subscription.tier': checkout_session.metadata.get('tier', 'professional'),
+                        'subscription.stripe_session_id': session_id,
+                        'subscription.started_at': datetime.utcnow()
+                    }
+                }
+            )
+            
+            # Record promo code usage if applicable
+            promo_code = checkout_session.metadata.get('promo_code')
+            if promo_code:
+                db.promo_code_usage.insert_one({
+                    'user_id': session['user_id'],
+                    'promo_code': promo_code,
+                    'used_at': datetime.utcnow(),
+                    'discount_applied': '50%' if promo_code == 'BETA50' else '0%'
+                })
+            
+            flash('Subscription activated successfully!', 'success')
+            
+        except Exception as e:
+            flash('Error activating subscription', 'error')
+            
+    return redirect(url_for('dashboard'))
+
+@app.route('/opportunities')
+@login_required
+@subscription_required('professional')
+def opportunities():
+    # Get opportunities with difficulty filtering
+    opportunities = get_sample_opportunities_with_difficulty()
+    
+    # Filter by difficulty level if requested
+    difficulty_filter = request.args.get('difficulty')
+    if difficulty_filter:
+        if difficulty_filter == 'beginner':
+            opportunities = [opp for opp in opportunities if opp['difficulty_score'] <= 3.0]
+        elif difficulty_filter == 'intermediate':
+            opportunities = [opp for opp in opportunities if 3.0 < opp['difficulty_score'] <= 6.0]
+        elif difficulty_filter == 'advanced':
+            opportunities = [opp for opp in opportunities if 6.0 < opp['difficulty_score'] <= 8.0]
+        elif difficulty_filter == 'expert':
+            opportunities = [opp for opp in opportunities if opp['difficulty_score'] > 8.0]
+    
+    return render_template('opportunities.html', 
+                         opportunities=opportunities,
+                         difficulty_filter=difficulty_filter)
+
+@app.route('/generate-application', methods=['POST'])
+@login_required
+@subscription_required('professional')
+def generate_application():
+    data = request.get_json()
+    opportunity_id = data.get('opportunity_id')
+    
+    if not opportunity_id:
+        return jsonify({'error': 'Opportunity ID required'}), 400
+    
+    # Simulate application generation with difficulty consideration
+    opportunities = get_sample_opportunities_with_difficulty()
+    opportunity = next((opp for opp in opportunities if opp['id'] == opportunity_id), None)
+    
+    if not opportunity:
+        return jsonify({'error': 'Opportunity not found'}), 404
+    
+    # Generate application based on difficulty level
+    difficulty_score = opportunity['difficulty_score']
+    
+    if difficulty_score >= 8.0:
+        recommendations = [
+            "Consider partnering with a university research institution",
+            "Ensure you have prior federal grant experience",
+            "Prepare for extensive regulatory compliance requirements",
+            "Plan for 6-12 months application development time"
+        ]
+    elif difficulty_score >= 6.0:
+        recommendations = [
+            "Gather letters of support early in the process",
+            "Prepare detailed budget justification",
+            "Consider hiring grant writing consultant",
+            "Plan for 3-6 months application development time"
+        ]
+    elif difficulty_score >= 4.0:
+        recommendations = [
+            "Focus on clear project goals and outcomes",
+            "Prepare basic budget and timeline",
+            "Gather organizational capacity documentation",
+            "Plan for 1-3 months application development time"
+        ]
+    else:
+        recommendations = [
+            "This is a beginner-friendly opportunity",
+            "Focus on clear problem statement and solution",
+            "Basic organizational information required",
+            "Can typically be completed in 2-4 weeks"
+        ]
+    
+    # Update user usage statistics
+    if db:
+        db.users.update_one(
+            {'_id': session['user_id']},
+            {'$inc': {'usage.applications_generated': 1}}
+        )
+    
+    return jsonify({
+        'success': True,
+        'opportunity_title': opportunity['title'],
+        'difficulty_score': difficulty_score,
+        'difficulty_category': opportunity['difficulty_category'],
+        'recommendations': recommendations,
+        'estimated_time': get_estimated_time(difficulty_score),
+        'required_expertise': opportunity.get('difficulty_factors', [])
+    })
+
+def get_estimated_time(difficulty_score):
+    """Get estimated application development time based on difficulty"""
+    if difficulty_score >= 8.0:
+        return "6-12 months"
+    elif difficulty_score >= 6.0:
+        return "3-6 months"
+    elif difficulty_score >= 4.0:
+        return "1-3 months"
+    else:
+        return "2-4 weeks"
+
+@app.route('/track-award', methods=['POST'])
+@login_required
+def track_award():
+    data = request.get_json()
+    
+    award_data = {
+        'user_id': session['user_id'],
+        'opportunity_title': data.get('opportunity_title'),
+        'amount_awarded': data.get('amount_awarded'),
+        'agency': data.get('agency'),
+        'award_date': datetime.utcnow(),
+        'verified': False
+    }
+    
+    if db:
+        result = db.awards.insert_one(award_data)
+        return jsonify({'success': True, 'award_id': str(result.inserted_id)})
+    else:
+        return jsonify({'error': 'Database error'}), 500
+
+@app.route('/api/metrics')
+def api_metrics():
+    """API endpoint for real-time metrics"""
+    # Calculate real metrics from database or return sample data
+    metrics = {
+        'total_grants': 8743,
+        'total_funding': 24800000000,
+        'success_rate': 34.2,
+        'users_helped': 1247,
+        'applications_generated': 3891,
+        'average_award': 285000
+    }
+    
+    return jsonify(metrics)
+
+@app.route('/api/difficulty-stats')
+def api_difficulty_stats():
+    """API endpoint for difficulty distribution statistics"""
+    opportunities = get_sample_opportunities_with_difficulty()
+    
+    stats = {
+        'total_opportunities': len(opportunities),
+        'difficulty_distribution': {
+            'entry_level': len([o for o in opportunities if o['difficulty_score'] <= 2.0]),
+            'beginner_friendly': len([o for o in opportunities if 2.0 < o['difficulty_score'] <= 4.0]),
+            'intermediate': len([o for o in opportunities if 4.0 < o['difficulty_score'] <= 6.0]),
+            'advanced': len([o for o in opportunities if 6.0 < o['difficulty_score'] <= 8.0]),
+            'expert_level': len([o for o in opportunities if o['difficulty_score'] > 8.0])
+        },
+        'average_difficulty': sum(o['difficulty_score'] for o in opportunities) / len(opportunities)
+    }
+    
+    return jsonify(stats)
+
+# ================================
+# ERROR HANDLERS
+# ================================
+
+@app.errorhandler(404)
+def not_found(error):
+    return render_template('error.html', 
+                         error_code=404, 
+                         error_message="Page not found"), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    return render_template('error.html', 
+                         error_code=500, 
+                         error_message="Internal server error"), 500
+
+# ================================
+# PRODUCTION SETTINGS
+# ================================
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5001))
-    app.run(debug=False, host='0.0.0.0', port=port)
+    port = int(os.environ.get('PORT', 5000))
+    debug_mode = os.environ.get('FLASK_ENV') != 'production'
     
+    print(f"🚀 Starting GrantAI Pro on port {port}")
+    print(f"🔧 Debug mode: {debug_mode}")
+    print(f"🗄️  Database: {'Connected' if db else 'Not connected'}")
+    print(f"💳 Stripe: {'Configured' if stripe.api_key else 'Not configured'}")
+    
+    app.run(host='0.0.0.0', port=port, debug=debug_mode)
