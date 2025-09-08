@@ -778,7 +778,7 @@ if __name__ == '__main__':
     
     print(f"🚀 Starting GrantAI Pro on port {port}")
     print(f"🔧 Debug mode: {debug_mode}")
-    print(f"🗄️  Database: {'Connected' if db else 'Not connected'}")
+    print(f"🗄️  Database: {'Connected' if db is not None else 'Not connected'}")
     print(f"💳 Stripe: {'Configured' if stripe.api_key else 'Not configured'}")
     
     app.run(host='0.0.0.0', port=port, debug=debug_mode)
