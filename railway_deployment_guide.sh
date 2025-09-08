@@ -588,7 +588,7 @@ cat > .env.example << 'EOF'
 # GrantAI.pro Environment Variables
 
 SECRET_KEY=your-secret-key-here
-MONGO_URI=mongodb+srv://username:password@cluster.mongodb.net/grantai?retryWrites=true&w=majority
+MONGO_URI=mongodb+srv://sam_db_user:toTHx5k0dMYqteie@cluster.mongodb.net/grantai?retryWrites=true&w=majority
 STRIPE_SECRET_KEY=sk_test_your_stripe_secret_key
 STRIPE_PUBLISHABLE_KEY=pk_test_your_stripe_publishable_key
 EOF
